@@ -31,15 +31,16 @@
       <div class="grid"><div><label>Name</label><input id="name" placeholder="Saturday volleyball"></div><div><label>Date</label><input id="date" type="date"></div><div><label>Teams</label><select id="count"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div></div>
       <label>Players in this tournament</label><p class="muted">Tap players to mark them Playing or Not playing.</p>
       <div id="players" class="grid"></div>
-      <div class="row" style="margin-top:14px"><button id="balanced">Create balanced teams</button><button id="manual" class="secondary">Create manual teams</button></div>
+      <div class="row" style="margin-top:14px"><button id="balanced">Create balanced teams</button><button id="manual" class="secondary">Create manual teams</button><button id="captain" class="secondary">Captain snake draft</button></div>
     </section>
     <section class="card hide" id="manualCard"><h2>Manual team assignment</h2><p class="muted">Every Playing player must be assigned before saving.</p><div id="assignments"></div><button id="saveManual">Save teams</button></section>
+    <section class="card hide" id="captainCard"><h2>Captain team selection</h2><p class="muted" id="draftHelp">Select one captain for each team, then start the shared-device snake draft.</p><div id="captains" class="grid"></div><div id="draftStatus"></div><div id="draftChoices"></div><button id="startDraft">Start captain draft</button></section>
     <section class="card hide" id="tournament"><div class="row between"><div><h2 id="title"></h2><span id="meta" class="muted"></span></div><button class="secondary" id="new">New tournament</button></div><div id="teams"></div><div class="row" style="margin-top:16px"><button id="schedule" class="secondary">Create round-robin schedule</button><button id="share">Share results</button></div><h2 style="margin-top:22px">Matches</h2><div id="matches"></div></section>
   </section>
 </main>
 <script>
 const $=id=>document.getElementById(id), key='court-balance-web-v1';
-let state=JSON.parse(localStorage.getItem(key)||'{"players":[],"tournament":null}'), selected=new Set(), draft=null;
+let state=JSON.parse(localStorage.getItem(key)||'{"players":[],"tournament":null}'), selected=new Set(), draft=null, captainIds=new Set();
 const save=()=>localStorage.setItem(key,JSON.stringify(state));
 const score=p=>Object.values(p.ratings||{}).reduce((a,v)=>a+({BEGINNER:1,MEDIUM:2,ADVANCED:3}[v]||0),0);
 function msg(t){$('message').textContent=t}
@@ -54,12 +55,35 @@ function teamsFor(manual){
   roster.sort((a,b)=>score(b)-score(a)).forEach((p,i)=>teams[i%(2*n)<n?i%(2*n):2*n-1-i%(2*n)].playerIds.push(p.id));create(teams);
 }
 function renderAssignments(){$('assignments').innerHTML=draft.players.map(id=>{let p=state.players.find(x=>x.id===id);return `<label>${p.name}<select data-id="${id}"><option value="">Choose team</option>${draft.teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select></label>`}).join('')}
-function create(teams){state.tournament={name:$('name').value||'Tournament',date:$('date').value,teams,matches:[]};save();draft=null;$('manualCard').classList.add('hide');renderTournament()}
+function create(teams){state.tournament={name:$('name').value||'Tournament',date:$('date').value,participantIds:[...selected],teams,matches:[]};save();draft=null;$('manualCard').classList.add('hide');renderTournament()}
 function renderTournament(){let t=state.tournament;if(!t)return;$('tournament').classList.remove('hide');$('title').textContent=t.name;$('meta').textContent=t.date||'No date';$('teams').innerHTML=t.teams.map(team=>{let ps=team.playerIds.map(id=>state.players.find(p=>p.id===id));return `<div class="team"><h3>${team.name} · score ${ps.reduce((a,p)=>a+score(p),0)}</h3><div class="muted">${ps.map(p=>p.name).join(' · ')||'No players'}</div></div>`}).join('');$('matches').innerHTML=t.matches.map((m,i)=>`<div class="match"><b>${i+1}. ${m.a} vs ${m.b}</b><div class="row"><input type="number" min="0" placeholder="Score" value="${m.as??''}" data-score="${i}" data-side="a"><input type="number" min="0" placeholder="Score" value="${m.bs??''}" data-score="${i}" data-side="b"><span class="status">${m.as==null||m.bs==null?'Not played':m.as==m.bs?'Draw':m.as>m.bs?m.a+' won':m.b+' won'}</span></div></div>`).join('')||'<p class="muted">No matches scheduled.</p>';document.querySelectorAll('[data-score]').forEach(e=>e.onchange=()=>{let m=t.matches[e.dataset.score];m[e.dataset.side+'s']=+e.target.value;save();renderTournament()})}
+function renderCaptains(){
+  const n=+$('count').value, t=state.tournament, live=state.captainDraft;
+  $('captainCard').classList.remove('hide');
+  if(live){
+    const picked=new Set(t.teams.flatMap(x=>x.playerIds)), choices=t.participantIds.filter(id=>!picked.has(id));
+    const pos=live.picks%n, round=Math.floor(live.picks/n)+1, teamIndex=Math.floor(live.picks/n)%2===0?pos:n-1-pos, team=t.teams[teamIndex];
+    $('draftHelp').textContent=choices.length?`Round ${round} · Pick ${live.picks+1} · ${team.name} selects next.`:'Draft complete — every Playing player is assigned.';
+    $('captains').innerHTML=t.teams.map((x,i)=>`<div class="player ${i===teamIndex&&choices.length?'selected':''}"><span>${x.name}<br><small class="muted">${x.playerIds.map(id=>state.players.find(p=>p.id===id).name).join(' · ')}</small></span><span class="status">${i+1}</span></div>`).join('');
+    $('draftStatus').innerHTML=`<p class="muted">Snake order: 1 → 2 → ${n} → ${n} → … → 2 → 1. ${choices.length} players remain.</p>`;
+    $('draftChoices').innerHTML=choices.map(id=>`<button class="secondary" data-pick="${id}">${state.players.find(p=>p.id===id).name} · ${score(state.players.find(p=>p.id===id))}</button>`).join(' ');
+    document.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>pickCaptain(b.dataset.pick));
+    $('startDraft').classList.add('hide'); return;
+  }
+  $('draftHelp').textContent=`Select exactly ${n} captains from Playing players. They become Team 1–${n} and select the remaining players in snake order.`;
+  $('captains').innerHTML=[...selected].map(id=>{let p=state.players.find(x=>x.id===id);return `<div class="player ${captainIds.has(id)?'selected':''}" data-captain="${id}"><span>${p.name}<br><small class="muted">Rating ${score(p)}</small></span><span class="status">${captainIds.has(id)?'Captain '+([...captainIds].indexOf(id)+1):'Select'}</span></div>`}).join('');
+  document.querySelectorAll('[data-captain]').forEach(e=>e.onclick=()=>{let id=e.dataset.captain;if(captainIds.has(id))captainIds.delete(id);else if(captainIds.size<n)captainIds.add(id);else return msg(`Choose only ${n} captains.`);renderCaptains()});
+  $('draftStatus').innerHTML=`<p class="muted">${captainIds.size} of ${n} captains selected.</p>`;$('draftChoices').innerHTML='';$('startDraft').classList.remove('hide');
+}
+function startCaptainDraft(){
+  const n=+$('count').value;if(captainIds.size!==n)return msg(`Select ${n} captains first.`);
+  const captains=[...captainIds];state.tournament={name:$('name').value||'Tournament',date:$('date').value,participantIds:[...selected],teams:captains.map((id,i)=>({id:'captain-team-'+i,name:'Team '+(i+1),playerIds:[id]})),matches:[]};state.captainDraft={picks:0};save();renderCaptains();renderTournament();
+}
+function pickCaptain(id){const t=state.tournament,n=t.teams.length,live=state.captainDraft,pos=live.picks%n,idx=Math.floor(live.picks/n)%2===0?pos:n-1-pos;t.teams[idx].playerIds.push(id);live.picks++;if(t.participantIds.every(id=>t.teams.some(x=>x.playerIds.includes(id))))delete state.captainDraft;save();renderCaptains();renderTournament()}
 $('file').onchange=async e=>{try{let d=JSON.parse(await e.target.files[0].text()),players=Array.isArray(d)?d:d.players;if(!Array.isArray(players)||!players.length)throw Error('No players list found.');state.players=players;state.tournament=null;save();selected=new Set(players.map(p=>p.id));$('app').classList.remove('hide');renderPlayers();msg(`Loaded ${players.length} players.`)}catch(err){msg('Could not read that roster file: '+err.message)}};
 $('export').onclick=()=>{let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='court-balance-backup.json';a.click()};
-$('balanced').onclick=()=>teamsFor(false);$('manual').onclick=()=>teamsFor(true);$('saveManual').onclick=()=>{let groups={};document.querySelectorAll('#assignments select').forEach(s=>groups[s.dataset.id]=s.value);if(Object.values(groups).some(x=>!x))return msg('Assign every Playing player.');draft.teams.forEach(t=>t.playerIds=draft.players.filter(id=>groups[id]===t.id));if(draft.teams.some(t=>!t.playerIds.length))return msg('Every team needs at least one player.');create(draft.teams)};
+$('balanced').onclick=()=>teamsFor(false);$('manual').onclick=()=>teamsFor(true);$('captain').onclick=()=>{captainIds=new Set();renderCaptains()};$('startDraft').onclick=startCaptainDraft;$('saveManual').onclick=()=>{let groups={};document.querySelectorAll('#assignments select').forEach(s=>groups[s.dataset.id]=s.value);if(Object.values(groups).some(x=>!x))return msg('Assign every Playing player.');draft.teams.forEach(t=>t.playerIds=draft.players.filter(id=>groups[id]===t.id));if(draft.teams.some(t=>!t.playerIds.length))return msg('Every team needs at least one player.');create(draft.teams)};
 $('schedule').onclick=()=>{let t=state.tournament;t.matches=[];t.teams.forEach((a,i)=>t.teams.slice(i+1).forEach(b=>t.matches.push({a:a.name,b:b.name})));save();renderTournament()};$('share').onclick=()=>{let t=state.tournament,text=`*${t.name}* ${t.date||''}\n\n`+t.teams.map(x=>`*${x.name}*\n`+x.playerIds.map(id=>'• '+state.players.find(p=>p.id===id).name).join('\n')).join('\n\n')+'\n\n*Matches*\n'+t.matches.map(m=>`${m.a} ${m.as??'-'} – ${m.bs??'-'} ${m.b}`).join('\n');navigator.share?navigator.share({text}):navigator.clipboard.writeText(text).then(()=>msg('Results copied to clipboard.'))};
-$('new').onclick=()=>{state.tournament=null;save();$('tournament').classList.add('hide')};if(state.players.length){$('app').classList.remove('hide');selected=new Set(state.players.map(p=>p.id));renderPlayers();renderTournament()}
+$('new').onclick=()=>{state.tournament=null;delete state.captainDraft;save();$('tournament').classList.add('hide');$('captainCard').classList.add('hide')};if(state.players.length){$('app').classList.remove('hide');selected=new Set(state.players.map(p=>p.id));renderPlayers();renderTournament();if(state.captainDraft)renderCaptains()}
 </script>
 </body></html>
