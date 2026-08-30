@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b3d2e">
+  <title>Court Balance</title>
+  <style>
+    :root { --green:#0b3d2e; --deep:#07261c; --orange:#ff6b2c; --sand:#e8d5a3; --text:#f4f7f2; --card:#124836; }
+    * { box-sizing:border-box } body { margin:0; background:linear-gradient(145deg,var(--deep),var(--green)); color:var(--text); font:16px system-ui,sans-serif; min-height:100vh }
+    main { max-width:860px; margin:auto; padding:24px 16px 56px } h1,h2 { font-family:Georgia,serif; color:var(--sand); margin:0 0 8px } h1 { font-size:2.4rem } p { color:#d4dfd7 } .card { background:var(--card); border:1px solid #e8d5a344; border-radius:14px; padding:16px; margin:16px 0 }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap } .between { justify-content:space-between } button,.button { border:0; border-radius:10px; background:var(--orange); color:white; padding:11px 14px; font:inherit; font-weight:650; cursor:pointer; text-decoration:none } button.secondary,.button.secondary { background:transparent; color:var(--sand); border:1px solid #e8d5a388 } button:disabled { opacity:.45; cursor:not-allowed }
+    input,select { width:100%; background:#0f3f30; color:white; border:1px solid #e8d5a388; border-radius:8px; padding:10px; font:inherit } label { display:block; font-size:.86rem; color:var(--sand); margin:10px 0 5px }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px } .player { padding:11px; border:1px solid #e8d5a333; border-radius:10px; display:flex; justify-content:space-between; gap:8px; cursor:pointer } .player.selected { border-color:var(--orange); background:#ff6b2c22 } .muted { color:#c2d0c8; font-size:.88rem } .status { color:var(--orange); font-weight:700; font-size:.82rem } .hide { display:none } .notice { border-left:4px solid var(--orange); padding-left:12px }
+    .team { border:1px solid #e8d5a344; border-radius:10px; padding:12px; margin-top:10px } .team h3 { margin:0; color:var(--sand) } .match { padding:10px 0; border-bottom:1px solid #e8d5a322 } .match:last-child { border:0 }
+  </style>
+</head>
+<body>
+<main>
+  <header class="row between"><div><h1>Court Balance</h1><p>Offline-first volleyball tournament organizer</p></div></header>
+  <section class="card notice">
+    <strong>Import your roster</strong>
+    <p>Choose a JSON file from your Mac or phone. Data stays on this device until you export it.</p>
+    <div class="row"><label class="button" for="file">Upload roster JSON</label><input id="file" class="hide" type="file" accept=".json,application/json"><button class="secondary" id="export">Download backup</button></div>
+    <div id="message" class="muted"></div>
+  </section>
+
+  <section id="app" class="hide">
+    <section class="card">
+      <h2>New tournament</h2>
+      <div class="grid"><div><label>Name</label><input id="name" placeholder="Saturday volleyball"></div><div><label>Date</label><input id="date" type="date"></div><div><label>Teams</label><select id="count"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div></div>
+      <label>Players in this tournament</label><p class="muted">Tap players to mark them Playing or Not playing.</p>
+      <div id="players" class="grid"></div>
+      <div class="row" style="margin-top:14px"><button id="balanced">Create balanced teams</button><button id="manual" class="secondary">Create manual teams</button></div>
+    </section>
+    <section class="card hide" id="manualCard"><h2>Manual team assignment</h2><p class="muted">Every Playing player must be assigned before saving.</p><div id="assignments"></div><button id="saveManual">Save teams</button></section>
+    <section class="card hide" id="tournament"><div class="row between"><div><h2 id="title"></h2><span id="meta" class="muted"></span></div><button class="secondary" id="new">New tournament</button></div><div id="teams"></div><div class="row" style="margin-top:16px"><button id="schedule" class="secondary">Create round-robin schedule</button><button id="share">Share results</button></div><h2 style="margin-top:22px">Matches</h2><div id="matches"></div></section>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id), key='court-balance-web-v1';
+let state=JSON.parse(localStorage.getItem(key)||'{"players":[],"tournament":null}'), selected=new Set(), draft=null;
+const save=()=>localStorage.setItem(key,JSON.stringify(state));
+const score=p=>Object.values(p.ratings||{}).reduce((a,v)=>a+({BEGINNER:1,MEDIUM:2,ADVANCED:3}[v]||0),0);
+function msg(t){$('message').textContent=t}
+function renderPlayers(){
+  $('players').innerHTML=state.players.map(p=>`<div class="player ${selected.has(p.id)?'selected':''}" data-id="${p.id}"><span>${p.name}<br><small class="muted">Rating ${score(p)}</small></span><span class="status">${selected.has(p.id)?'Playing':'Not playing'}</span></div>`).join('');
+  document.querySelectorAll('.player').forEach(e=>e.onclick=()=>{selected.has(e.dataset.id)?selected.delete(e.dataset.id):selected.add(e.dataset.id);renderPlayers()});
+}
+function teamsFor(manual){
+  const ids=[...selected], n=+$('count').value;if(ids.length<n)return msg(`Select at least ${n} players.`);
+  const roster=ids.map(id=>state.players.find(p=>p.id===id)); const teams=Array.from({length:n},(_,i)=>({id:'team-'+i,name:'Team '+(i+1),playerIds:[]}));
+  if(manual){draft={name:$('name').value||'Tournament',date:$('date').value,teams,players:ids,matches:[]};$('manualCard').classList.remove('hide');renderAssignments();return}
+  roster.sort((a,b)=>score(b)-score(a)).forEach((p,i)=>teams[i%(2*n)<n?i%(2*n):2*n-1-i%(2*n)].playerIds.push(p.id));create(teams);
+}
+function renderAssignments(){$('assignments').innerHTML=draft.players.map(id=>{let p=state.players.find(x=>x.id===id);return `<label>${p.name}<select data-id="${id}"><option value="">Choose team</option>${draft.teams.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select></label>`}).join('')}
+function create(teams){state.tournament={name:$('name').value||'Tournament',date:$('date').value,teams,matches:[]};save();draft=null;$('manualCard').classList.add('hide');renderTournament()}
+function renderTournament(){let t=state.tournament;if(!t)return;$('tournament').classList.remove('hide');$('title').textContent=t.name;$('meta').textContent=t.date||'No date';$('teams').innerHTML=t.teams.map(team=>{let ps=team.playerIds.map(id=>state.players.find(p=>p.id===id));return `<div class="team"><h3>${team.name} · score ${ps.reduce((a,p)=>a+score(p),0)}</h3><div class="muted">${ps.map(p=>p.name).join(' · ')||'No players'}</div></div>`}).join('');$('matches').innerHTML=t.matches.map((m,i)=>`<div class="match"><b>${i+1}. ${m.a} vs ${m.b}</b><div class="row"><input type="number" min="0" placeholder="Score" value="${m.as??''}" data-score="${i}" data-side="a"><input type="number" min="0" placeholder="Score" value="${m.bs??''}" data-score="${i}" data-side="b"><span class="status">${m.as==null||m.bs==null?'Not played':m.as==m.bs?'Draw':m.as>m.bs?m.a+' won':m.b+' won'}</span></div></div>`).join('')||'<p class="muted">No matches scheduled.</p>';document.querySelectorAll('[data-score]').forEach(e=>e.onchange=()=>{let m=t.matches[e.dataset.score];m[e.dataset.side+'s']=+e.target.value;save();renderTournament()})}
+$('file').onchange=async e=>{try{let d=JSON.parse(await e.target.files[0].text()),players=Array.isArray(d)?d:d.players;if(!Array.isArray(players)||!players.length)throw Error('No players list found.');state.players=players;state.tournament=null;save();selected=new Set(players.map(p=>p.id));$('app').classList.remove('hide');renderPlayers();msg(`Loaded ${players.length} players.`)}catch(err){msg('Could not read that roster file: '+err.message)}};
+$('export').onclick=()=>{let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='court-balance-backup.json';a.click()};
+$('balanced').onclick=()=>teamsFor(false);$('manual').onclick=()=>teamsFor(true);$('saveManual').onclick=()=>{let groups={};document.querySelectorAll('#assignments select').forEach(s=>groups[s.dataset.id]=s.value);if(Object.values(groups).some(x=>!x))return msg('Assign every Playing player.');draft.teams.forEach(t=>t.playerIds=draft.players.filter(id=>groups[id]===t.id));if(draft.teams.some(t=>!t.playerIds.length))return msg('Every team needs at least one player.');create(draft.teams)};
+$('schedule').onclick=()=>{let t=state.tournament;t.matches=[];t.teams.forEach((a,i)=>t.teams.slice(i+1).forEach(b=>t.matches.push({a:a.name,b:b.name})));save();renderTournament()};$('share').onclick=()=>{let t=state.tournament,text=`*${t.name}* ${t.date||''}\n\n`+t.teams.map(x=>`*${x.name}*\n`+x.playerIds.map(id=>'• '+state.players.find(p=>p.id===id).name).join('\n')).join('\n\n')+'\n\n*Matches*\n'+t.matches.map(m=>`${m.a} ${m.as??'-'} – ${m.bs??'-'} ${m.b}`).join('\n');navigator.share?navigator.share({text}):navigator.clipboard.writeText(text).then(()=>msg('Results copied to clipboard.'))};
+$('new').onclick=()=>{state.tournament=null;save();$('tournament').classList.add('hide')};if(state.players.length){$('app').classList.remove('hide');selected=new Set(state.players.map(p=>p.id));renderPlayers();renderTournament()}
+</script>
+</body></html>
